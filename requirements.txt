@@ -1,0 +1,13 @@
+pandas
+requests
+numpy
+mysql-connector-python
+gspread
+google-auth
+google-api-python-client
+google-cloud-storage
+google-cloud-secret-manager
+google-cloud-logging
+oauth2client
+flask
+pyodbc
