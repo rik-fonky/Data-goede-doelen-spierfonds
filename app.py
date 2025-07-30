@@ -63,18 +63,12 @@ credentials_sc = json.loads(credentials_sc_json)
 credentials_mf_json = access_secret_version("mfs_database")
 credentials_mf = json.loads(credentials_mf_json)
 
-status_translation = {
-    'pending': 'In afwachting...',
-    'definitive': 'Goedgekeurd',
-    'refused': 'Afval',
-    'deleted': 'Verwijderd',
-    'falling_out': 'Uitval',
-}
+
 
 def connect_to_user_db():
     host = credentials_mf["host"]
     user = credentials_mf["user"]
-    database = credentials_mf["database_mfs"]
+    database = credentials_mf["database_mf"]
     password = credentials_mf["password"]
     port = int(credentials_mf["port"])
 
@@ -89,35 +83,72 @@ def connect_to_user_db():
     return mysql.connector.connect(**user_db_config)
 
 
-def fetch_status_hs_mf(user_db_connection, days_back):
-    query = f"""
-    SELECT
-    	 s.order_id AS 'Result ID MF',
-        s.`status` AS 'Status MF'
-        
-    FROM sales s
-    WHERE
-    	s.client_id = 21
-        AND s.product_id NOT IN (24254,24255,24355,24356)
+def fetch_branch_mf(user_db_connection, days_back):
+    query = """
+            SELECT
+                o.external_id AS `Result ID MF`,
+                b.name        AS `Vestiging_mf`
+            FROM orders o
+                     JOIN branches b ON o.branch_id = b.id
+                     JOIN client_projects cp ON o.client_project_id = cp.id
+                     JOIN clients c ON cp.client_id = c.id
+            WHERE
+                c.id = 11
+              AND
+                DATE(o.ordered_at) >= DATE_SUB(CURDATE(), INTERVAL %s DAY); \
+            """
+    cursor = user_db_connection.cursor()
+    cursor.execute(query, (days_back,))
+    rows = cursor.fetchall()
+    cursor.close()
 
+    mf_branche_df = pd.DataFrame(rows,
+                                 columns=['Result ID MF', 'Vestiging_mf'])
+    # ensure both columns are strings:
+    mf_branche_df['Result ID MF'] = mf_branche_df['Result ID MF'].astype(str)
+    mf_branche_df['Vestiging_mf'] = mf_branche_df['Vestiging_mf'].astype(str)
+    return mf_branche_df
+
+
+def fetch_status_mf(user_db_connection, days_back):
+    query = """
+    SELECT
+        o.external_id AS 'Result ID MF',
+        CASE WHEN o.order_status_id = 1 THEN 'In afwachting...'
+            WHEN o.order_status_id = 2 THEN 'Afval'
+            WHEN o.order_status_id = 3 THEN 'Uitval'
+            WHEN o.order_status_id = 4 THEN 'Goedgekeurd'
+        END AS 'Status MF'
+        
+    FROM orders o
+    JOIN order_statuses os ON o.order_status_id = os.id
+    LEFT JOIN client_projects cp ON o.client_project_id = cp.id
+    LEFT JOIN clients c ON cp.client_id = c.id
+    WHERE
+        c.id = 11
     AND
-    	DATE(s.sold_on) >= DATE_SUB(CURDATE(), INTERVAL {days_back} DAY)
+        DATE(o.ordered_at) >= DATE_SUB(CURDATE(), INTERVAL %s DAY); \
     """
     cursor = user_db_connection.cursor()
-    cursor.execute(query)
-    df = cursor.fetchall()
-    mf_status_df = pd.DataFrame(df, columns=['Result ID MF', 'Status MF'])
+    cursor.execute(query, (days_back,))
+    rows = cursor.fetchall()
     cursor.close()
+
+    mf_status_df = pd.DataFrame(rows,
+                                 columns=['Result ID MF', 'Status MF'])
+
+    mf_status_df['Result ID MF'] = mf_status_df['Result ID MF'].astype(str)
+    mf_status_df['Status MF'] = mf_status_df['Status MF'].astype(str)
     return mf_status_df
 
 
-def process_file_hs(list_id, connection, cursor, days_back):
+def process_file(connection, cursor, days_back):
     # Database connection parameters
-    server = '185.226.137.246'
-    database = 'fonky'
-    username = 'DB03_fonky'
-    password = 'ee34e04331b0334ae007429198d5502a59b0c72a'
-    port = 1433
+    server = credentials_sc['server']
+    database = credentials_sc['database']
+    username = credentials_sc['user']
+    password = credentials_sc['password']
+    port = credentials_sc['port']
     driver = '{ODBC Driver 18 for SQL Server}'
     
 
@@ -139,22 +170,20 @@ def process_file_hs(list_id, connection, cursor, days_back):
     # SQL Query
     query = """
     SELECT
-            c.boxPID_800 AS 'Result ID',
-        c.boxPID_774 AS Werver,
+        c.boxPID_5927 AS 'Result ID',
+        c.boxPID_5904 AS Werver,
         CASE
             WHEN p.tussen = '' THEN CONCAT(TRIM(p.roepnaam), ' ', TRIM(p.naam))
             ELSE CONCAT(TRIM(p.roepnaam), ' ', TRIM(p.tussen), ' ', TRIM(p.naam))
         END AS 'FCC Agent',
-        c.boxPID_793 AS 'Werfdatum',
+        c.boxPID_5921 AS 'Werfdatum',
         ch.date_finishrecord AS 'Laatst gebeld',
-        c.boxPID_775 AS Vestiging,
+        '' AS Vestiging,
         TRIM(cr.resultcodeExport) AS 'Status',
         TRIM(cr.caption) AS 'Status betekenis',
-        c.boxPID_781 AS 'Telefoonnummer',
-        c.boxPID_1903 AS Woonplaats,
         CASE WHEN
-                c.boxPID_1969 IS NOT NULL THEN c.boxPID_1969
-                ELSE c.boxPID_794
+                c.boxPID_6169 IS NOT NULL THEN CONVERT(INT, REPLACE(c.boxPID_6169,',',''))
+                ELSE c.boxPID_5922
         END AS Donatiebedrag,
         CASE WHEN 
                 SUM(chs.call_count) IS NULL THEN 1
@@ -162,10 +191,10 @@ def process_file_hs(list_id, connection, cursor, days_back):
         END AS 'Aantal keer gebeld',
         CASE WHEN
                 cr.resultcode IN ('200','202', '204','205','206','207','208') THEN NULL
-                ELSE c.boxPID_1914
+                ELSE c.boxPID_5982
         END AS 'Bijzonderheid',
         CASE WHEN
-                cr.resultcode IN ('200','202', '204','205','206','207','208') THEN c.boxPID_1914
+                cr.resultcode IN ('200','202', '204','205','206','207','208') THEN c.boxPID_5982
                 ELSE NULL
         END AS 'Afval/Omzetting reden',
         CASE WHEN
@@ -175,15 +204,15 @@ def process_file_hs(list_id, connection, cursor, days_back):
         END AS 'Bereikt',
         CASE WHEN
                 cr.resultcode IN ('202', '204','205','206','207','208') AND c.sys_status NOT IN (1) THEN 'Ja'
-          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_1969 IS NOT NULL AND c.boxPID_1969 < 5 THEN 'Ja'
-          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_1969 IS NULL AND c.boxPID_794 < 5 THEN 'Ja'
+          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_6169 IS NOT NULL AND CONVERT(INT, REPLACE(c.boxPID_6169,',','')) < 500 THEN 'Ja'
+          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_5922 IS NOT NULL AND CONVERT(INT, c.boxPID_5922) < 500 THEN 'Ja'
                 WHEN c.sys_status IN (1) THEN 'Loopt nog'
                 ELSE 'Nee'
         END AS 'Afval',
         TRIM(crc.filenaam) as 'Voicelog'
      FROM
-        C000010 c
-        LEFT JOIN C000010_History ch ON c.sys_lastchpid = ch.pid
+        C000018 c
+        LEFT JOIN C000018_History ch ON c.sys_lastchpid = ch.pid
         LEFT JOIN personeel p ON ch.agentpid = p.PID
         LEFT JOIN campagnes_resultcodes cr ON c.sys_lastrc = cr.resultcode
         LEFT JOIN (
@@ -191,7 +220,7 @@ def process_file_hs(list_id, connection, cursor, days_back):
             cth.ctpid,
             COUNT(*) AS call_count
         FROM
-            C000010_History cth
+            C000018_History cth
         GROUP BY
             cth.ctpid
         HAVING
@@ -208,12 +237,12 @@ def process_file_hs(list_id, connection, cursor, days_back):
         LEFT JOIN campagnes_recordings crc ON crc.campagnehistorypid = crc_max.campagnehistorypid AND crc.datumtot = crc_max.max_datumtot AND crc.campagneprojectpid = crc_max.campagneprojectpid
     WHERE
         CAST(c.sys_importdate AS date) <= CAST(GETDATE() AS date)
-        AND CONVERT(date, c.boxPID_793, 105) >= DATEADD(day, -?, GETDATE())
-        AND c.boxPID_795 IS NOT NULL
-        AND c.boxPID_800 IS NOT NULL
-        AND cr.campagnePID = 10
-    GROUP BY c.boxPID_800, c.boxPID_774,p.tussen, p.roepnaam, p.naam, c.boxPID_793, ch.date_finishrecord,c.boxPID_775,cr.resultcodeExport,
-                 cr.caption,c.boxPID_781,c.boxPID_1903, c.boxPID_1969,c.boxPID_794, c.boxPID_1914, c.sys_status,crc.filenaam,cr.resultcode;
+        AND CONVERT(date, c.boxPID_5921, 105) >= DATEADD(day, -?, GETDATE())
+        AND c.boxPID_5927 IS NOT NULL
+        AND c.boxPID_6496 IS NOT NULL
+        AND cr.campagnePID = 18
+    GROUP BY c.boxPID_5927, c.boxPID_5904,p.tussen, p.roepnaam, p.naam, c.boxPID_5921, ch.date_finishrecord,c.boxPID_6169,cr.resultcodeExport,
+                 cr.caption,c.boxPID_6496,c.boxPID_5922,c.boxPID_5982, c.sys_status,crc.filenaam,cr.resultcode;
     """
 
     try:
@@ -222,22 +251,26 @@ def process_file_hs(list_id, connection, cursor, days_back):
         
         # Get the status information.
         user_db_connection = connect_to_user_db()
-        mf_status_df = fetch_status_hs_mf(user_db_connection, days_back)
-        mf_status_df['Result ID MF'] = mf_status_df['Result ID MF'].astype(str)
-        mf_status_df['Status MF'] = mf_status_df['Status MF'].astype(str)
-        mf_status_df['Status MF'] = mf_status_df['Status MF'].map(status_translation)
+        mf_status_df = fetch_status_mf(user_db_connection, days_back)
+        mf_branches_df = fetch_branch_mf(user_db_connection, days_back)
 
         # Convert the SQL results "Result ID" to string for merging,
         # but also later for proper numeric sort, we convert to numeric.
-        results_df['Result ID'] = pd.to_numeric(results_df['Result ID'], errors='coerce')
         results_df['Voicelog'] = results_df['Voicelog'].apply(create_voicelog_link)
 
         if 'Result ID' in results_df and 'Result ID MF' in mf_status_df:
             results_df['Result ID'] = results_df['Result ID'].astype(str)
             results_df = results_df.merge(mf_status_df, left_on='Result ID', right_on='Result ID MF', how='left')
             results_df.drop(columns=['Result ID MF'], inplace=True)
+
+        if 'Result ID' in results_df and 'Result ID MF' in mf_branches_df:
+            results_df['Result ID'] = results_df['Result ID'].astype(str)
+            results_df = results_df.merge(mf_branches_df, left_on='Result ID', right_on='Result ID MF', how='left')
+            results_df['Vestiging'] = results_df['Vestiging_mf']
+            results_df.drop(columns=['Result ID MF'], inplace=True)
+            results_df.drop(columns=['Vestiging_mf'], inplace=True)
         
-        logging.info(f"Query executed and data fetched for list_id={list_id}")
+        logging.info(f"Query executed and data fetched")
         return results_df
 
     except Exception as e:
@@ -298,7 +331,7 @@ def fetch_spreadsheet_data(client, sheet, days_back):
     filtered_df['Werfdatum'] = filtered_df['Werfdatum'].dt.strftime('%d-%m-%Y')
     # Convert the 'Result ID' column to numeric for later merging/sorting (if possible)
     if 'Result ID' in filtered_df.columns:
-        filtered_df['Result ID'] = pd.to_numeric(filtered_df['Result ID'], errors='coerce')
+        filtered_df['Result ID'] = filtered_df['Result ID'].astype(str)
     return filtered_df, df
 
 # --- Try to parse dates (used when processing SQL results) ---
@@ -447,25 +480,17 @@ def main():
     )
     cursor = connection.cursor()
 
-    sheet_to_list_id = {
-        'HS': '401'
-    }
-    sheets = ["HS"]
+    sheets = ["Spierfonds"]
     for sheet_name in sheets:
         # Fetch Google Sheet data (both filtered and full)
         filtered_sheet_df, full_sheet_df = fetch_spreadsheet_data(client, sheet_name, days_back)
         # Convert 'Result ID' to numeric for correct merging and sorting
-        if 'Result ID' in filtered_sheet_df.columns:
-            filtered_sheet_df['Result ID'] = pd.to_numeric(filtered_sheet_df['Result ID'], errors='coerce')
 
-        list_id = sheet_to_list_id[sheet_name]
-        print(f"Using list id {list_id}")
-        
         # Fetch SQL data for this list
-        results_df = process_file_hs(list_id, connection, cursor, days_back)
-        print("Processing HS Sheet")
+        results_df = process_file(connection, cursor, days_back)
+        print(f"Processing {sheet_name} Sheet")
         if results_df.empty:
-            logging.warning(f"No data found or error processing data for list_id={list_id}")
+            logging.warning(f"No data found or error processing data for {sheet_name}")
             return
         
         # Process results_df: convert date columns and result id
@@ -481,8 +506,6 @@ def main():
         results_df['Vestiging'] = results_df['Vestiging'].str.strip()
         results_df = results_df.drop_duplicates(subset=['Result ID']).reset_index(drop=True)
         # Convert 'Result ID' to numeric for sorting
-        results_df['Result ID'] = pd.to_numeric(results_df['Result ID'], errors='coerce')
-        results_df.sort_values(by=['Result ID'], inplace=True)
 
         # Determine which SQL results are already in the Google Sheet
         existing_ids = filtered_sheet_df['Result ID'].unique() if not filtered_sheet_df.empty else np.array([])
