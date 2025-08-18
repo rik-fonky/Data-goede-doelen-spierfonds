@@ -181,9 +181,9 @@ def process_file(connection, cursor, days_back):
         '' AS Vestiging,
         TRIM(cr.resultcodeExport) AS 'Status',
         TRIM(cr.caption) AS 'Status betekenis',
-        CASE WHEN
-                c.boxPID_6169 IS NOT NULL THEN CONVERT(INT, REPLACE(c.boxPID_6169,',',''))
-                ELSE c.boxPID_5922
+        CASE WHEN c.boxPID_6169 IS NOT NULL 
+             THEN CONVERT(INT, REPLACE(REPLACE(c.boxPID_6169, ',', ''), '.', ''))
+             ELSE c.boxPID_5922
         END AS Donatiebedrag,
         CASE WHEN 
                 SUM(chs.call_count) IS NULL THEN 1
@@ -204,8 +204,8 @@ def process_file(connection, cursor, days_back):
         END AS 'Bereikt',
         CASE WHEN
                 cr.resultcode IN ('202', '204','205','206','207','208') AND c.sys_status NOT IN (1) THEN 'Ja'
-          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_6169 IS NOT NULL AND CONVERT(INT, REPLACE(c.boxPID_6169,',','')) < 500 THEN 'Ja'
-          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_5922 IS NOT NULL AND CONVERT(INT, c.boxPID_5922) < 500 THEN 'Ja'
+          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_6169 IS NOT NULL AND CONVERT(INT, REPLACE(REPLACE(c.boxPID_6169, ',', ''), '.', '')) < 500 THEN 'Ja'
+          WHEN cr.resultcode IN ('200') AND c.sys_status NOT IN (1) AND c.boxPID_5922 IS NOT NULL AND CONVERT(INT, REPLACE(REPLACE(c.boxPID_5922, ',', ''), '.', '')) < 500 THEN 'Ja'
                 WHEN c.sys_status IN (1) THEN 'Loopt nog'
                 ELSE 'Nee'
         END AS 'Afval',
@@ -559,3 +559,4 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.debug = True
     app.run(host='0.0.0.0', port=port)
+
