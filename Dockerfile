@@ -1,5 +1,5 @@
 # Use the official Python image from the Docker Hub
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 # Set the working directory in the container
 WORKDIR /app
@@ -37,3 +37,4 @@ EXPOSE 8080
 
 # Run app.py when the container launches
 CMD ["python", "app.py"]
+
