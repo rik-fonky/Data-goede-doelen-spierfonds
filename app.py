@@ -562,8 +562,4 @@ def run_main():
         return "Internal Server Error", 500
     return "Script executed successfully."
 
-if __name__ == '__main__':
-    logging.info("Starting Flask application.")
-    port = int(os.environ.get('PORT', 8080))
-    app.debug = True
-    app.run(host='0.0.0.0', port=port)
+
