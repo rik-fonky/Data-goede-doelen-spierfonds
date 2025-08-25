@@ -1,40 +1,44 @@
 # Use the official Python image from the Docker Hub
 FROM python:3.10-slim
 
+# Noninteractive apt
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies for pyodbc and ODBC drivers
-RUN apt-get update && apt-get install -y \
+# System deps for pyodbc + build, and tools for key handling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    gnupg \
+    ca-certificates \
     unixodbc \
     unixodbc-dev \
     odbcinst \
-    curl \
-    gnupg2 \
     libpq-dev \
     libsqlite3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Add Microsoft repo (Debian 12/bookworm) using keyring, not apt-key
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+    > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+      msodbcsql18 \
+      mssql-tools18 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Microsoft ODBC Driver for SQL Server (if using MSSQL)
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
-    echo "deb [arch=amd64] https://packages.microsoft.com/debian/10/prod buster main" > /etc/apt/sources.list.d/mssql-release.list && \
-    apt-get update && ACCEPT_EULA=Y apt-get install -y \
-    msodbcsql18 \
-    mssql-tools18 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set PATH for SQL Server tools
+# Put sqlcmd/bcp on PATH
 ENV PATH="/opt/mssql-tools18/bin:${PATH}"
 
-# Copy the current directory contents into the container at /app
+# Copy your code
 COPY . .
 
-# Install any needed packages specified in requirements.txt
+# Python deps
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Make port 8080 available to the world outside this container
+# Expose and run with Gunicorn
 EXPOSE 8080
-
-# Run app.py when the container launches
 CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]
-
